@@ -6,9 +6,6 @@ namespace JinnDev.JCMU.Addon.NuGetPublisher.Services;
 
 public static class UserInteractionService
 {
-    /// <summary>
-    /// Executes the first-time setup when no config file exists.
-    /// </summary>
     public static async Task<Maybe<PublishConfig>> RunFirstTimeSetupAsync(IHostServices host)
     {
         host.Logger.LogInfo("=== First Time Setup ===");
@@ -18,15 +15,19 @@ public static class UserInteractionService
             .BindAsync(newSource =>
             {
                 var config = new PublishConfig { Sources = new List<PublishSource> { newSource } };
-                ConfigurationManager.SaveConfig(config);
-                host.Logger.LogInfo("Configuration saved successfully!\n");
-                return Task.FromResult(Maybe.Some(config));
+
+                return host.Settings.SetValueAsync("PublishConfig", config)
+                    .BindAsync(_ => string.IsNullOrWhiteSpace(newSource.ApiKey)
+                        ? Task.FromResult(Maybe.SUCCESS) // No API Key, just move on
+                        : host.Settings.SetSecretAsync($"ApiKey_{newSource.Name}", newSource.ApiKey))
+                    .TapAsync(_ => {
+                        host.Logger.LogInfo("Configuration saved successfully!\n");
+                        return Task.CompletedTask;
+                    })
+                    .WithValueAsync(() => config);
             }).ConfigureAwait(false);
     }
 
-    /// <summary>
-    /// Prompts the user to select which target source to publish to, or add a new one.
-    /// </summary>
     public static async Task<Maybe<PublishSource>> SelectSourceAsync(PublishConfig config, IHostServices host)
     {
         var defaultSource = config.Sources.First(x => x.IsDefault);
@@ -44,14 +45,16 @@ public static class UserInteractionService
 
         var inputResult = await host.PromptUserAsync($"\nSelect Source (1-{addOptionIndex}) or Enter for Default:").ConfigureAwait(false);
 
-        // MatchAsync lets us handle the asynchronous "Add New" flow cleanly inside the match block
         return await inputResult.MatchAsync(
             someAsync: async input =>
             {
                 if (int.TryParse(input, out int choice))
                 {
                     if (choice > 0 && choice <= config.Sources.Count)
-                        return Maybe.Some(config.Sources[choice - 1]);
+                    {
+                        var selected = config.Sources[choice - 1];
+                        return await LoadApiKeyAsync(selected, host).ConfigureAwait(false);
+                    }
 
                     if (choice == addOptionIndex)
                         return await AddAndSaveNewSourceAsync(config, host).ConfigureAwait(false);
@@ -59,8 +62,37 @@ public static class UserInteractionService
 
                 return Maybe.None<PublishSource>("Invalid source selection.");
             },
-            noneAsync: err => Task.FromResult(Maybe.Some(defaultSource)) // User hit Enter
+            noneAsync: async err => await LoadApiKeyAsync(defaultSource, host).ConfigureAwait(false)
         ).ConfigureAwait(false);
+    }
+
+    /// <summary>
+    /// Re-hydrates the ApiKey from the secure DPAPI vault into memory since it was ignored by JSON.
+    /// </summary>
+    private static async Task<Maybe<PublishSource>> LoadApiKeyAsync(PublishSource source, IHostServices host)
+    {
+        var secret = await host.Settings.GetSecretAsync($"ApiKey_{source.Name}").ConfigureAwait(false);
+
+        // Rebuild the immutable record, popping the API Key back in if it exists
+        return Maybe.Some(source with { ApiKey = secret.Match(some: k => k, none: err => null!) });
+    }
+
+    private static async Task<Maybe<PublishSource>> AddAndSaveNewSourceAsync(PublishConfig config, IHostServices host)
+    {
+        return await PromptForNewSourceAsync(host, isDefault: false)
+            .BindAsync(newSource =>
+            {
+                config.Sources.Add(newSource);
+
+                return host.Settings.SetValueAsync("PublishConfig", config)
+                    .BindAsync(_ => string.IsNullOrWhiteSpace(newSource.ApiKey)
+                        ? Task.FromResult(Maybe.SUCCESS)
+                        : host.Settings.SetSecretAsync($"ApiKey_{newSource.Name}", newSource.ApiKey))
+                    .TapAsync(_ => {
+                        host.Logger.LogInfo($"\nSource '{newSource.Name}' saved successfully!");
+                        return Task.CompletedTask; })
+                    .WithValueAsync(() => newSource);
+            }).ConfigureAwait(false);
     }
 
     /// <summary>
@@ -110,22 +142,5 @@ public static class UserInteractionService
                    ApiKey = apiKey,
                    IsDefault = isDefault
                }));
-    }
-
-    /// <summary>
-    /// Helper to run the prompt, add it to the config, save to disk, and return it.
-    /// </summary>
-    private static async Task<Maybe<PublishSource>> AddAndSaveNewSourceAsync(PublishConfig config, IHostServices host)
-    {
-        return await PromptForNewSourceAsync(host, isDefault: false)
-            .TapAsync(
-                someActionAsync: async newSource =>
-                {
-                    config.Sources.Add(newSource);
-                    ConfigurationManager.SaveConfig(config);
-                    host.Logger.LogInfo($"\nSource '{newSource.Name}' saved successfully!");
-                },
-                noneActionAsync: async err => { /* do nothing on cancel */ }
-            ).ConfigureAwait(false);
     }
 }

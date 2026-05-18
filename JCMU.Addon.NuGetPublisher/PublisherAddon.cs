@@ -18,7 +18,8 @@ public class PublisherAddon : IJcmuAddon
         host.Logger.LogInfo("    JinnDev Publisher: Dynamic Discovery Mode     ");
         host.Logger.LogInfo("==================================================\n");
 
-        var result = await ConfigurationManager.LoadConfig()
+
+        var result = await host.Settings.GetValueAsync<PublishConfig>("PublishConfig")
             .OrElseAsync(() => UserInteractionService.RunFirstTimeSetupAsync(host))
             .BindAsync(config => PrepareContextAsync(config, context.TargetDirectory, host))
             .BindAsync(ctx => UserInteractionService.ConfirmPlanAsync(ctx, host))
