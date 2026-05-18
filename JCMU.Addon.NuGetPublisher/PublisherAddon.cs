@@ -19,23 +19,8 @@ public class PublisherAddon : IJcmuAddon
         host.Logger.LogInfo("==================================================\n");
 
         var result = await ConfigurationManager.LoadConfig()
-            // If the config fails to load, gracefully fall into the First-Time Setup
             .OrElseAsync(() => UserInteractionService.RunFirstTimeSetupAsync(host))
-
-            // Proceed to project discovery using the specific right-clicked folder
-            .BindAsync(async (PublishConfig config) =>
-            {
-                return await ProjectDiscoveryService.DiscoverProjectAsync(context.TargetDirectory, host)
-                    .BindAsync(async (string projPath) =>
-                    {
-                        return await UserInteractionService.SelectSourceAsync(config, host)
-                            .BindAsync(async (PublishSource source) => await BuildContextAsync(projPath, source, host).ConfigureAwait(false))
-                        .ConfigureAwait(false);
-                    })
-                    .ConfigureAwait(false);
-            })
-
-            // Execute the pipeline steps sequentially
+            .BindAsync(config => PrepareContextAsync(config, context.TargetDirectory, host))
             .BindAsync(ctx => UserInteractionService.ConfirmPlanAsync(ctx, host))
             .BindAsync(ctx => ProjectMetadataService.UpdateProjectVersion(ctx.ProjectPath, ctx.TargetVersion).WithValueAsync(ctx))
             .BindAsync(ctx => CommandLineExecutionService.ExecuteBuildAsync(ctx, host, runner))
@@ -55,43 +40,22 @@ public class PublisherAddon : IJcmuAddon
         return result.WithValue(-1);
     }
 
-    //public async Task<Maybe<int>> ExecuteAsync(ActionContext context)
-    //{
-    //    var host = context.HostServices;
-    //    var runner = new StatelessRunner();
+    private static async Task<Maybe<PublishContext>> PrepareContextAsync(PublishConfig config, string targetDirectory, IHostServices host)
+    {
+        // 1. Flattened asynchronous execution (no pyramid of doom)
+        var projRes = await ProjectDiscoveryService.DiscoverProjectAsync(targetDirectory, host).ConfigureAwait(false);
+        if (!projRes.HasValue) return Maybe.PropagateFailure<PublishContext, Maybe<string>>(projRes);
 
-    //    host.Logger.LogInfo("==================================================");
-    //    host.Logger.LogInfo("    JinnDev Publisher: Dynamic Discovery Mode     ");
-    //    host.Logger.LogInfo("==================================================\n");
+        var sourceRes = await UserInteractionService.SelectSourceAsync(config, host).ConfigureAwait(false);
+        if (!sourceRes.HasValue) return Maybe.PropagateFailure<PublishContext, Maybe<PublishSource>>(sourceRes);
 
-    //    var result = await ConfigurationManager.LoadConfig()
-    //        // If the config fails to load, gracefully fall into the First-Time Setup
-    //        .OrElseAsync(() => UserInteractionService.RunFirstTimeSetupAsync(host))
-
-    //        // Proceed to project discovery using the specific right-clicked folder
-    //        .BindAsync(config => ProjectDiscoveryService.DiscoverProjectAsync(context.TargetDirectory, host)
-    //            .BindAsync(projPath => UserInteractionService.SelectSourceAsync(config, host)
-    //            .BindAsync(source => BuildContextAsync(projPath, source, host))))
-
-    //        // Execute the pipeline steps sequentially
-    //        .BindAsync(ctx => UserInteractionService.ConfirmPlanAsync(ctx, host))
-    //        .BindAsync(ctx => ProjectMetadataService.UpdateProjectVersion(ctx.ProjectPath, ctx.TargetVersion).WithValueAsync(ctx))
-    //        .BindAsync(ctx => CommandLineExecutionService.ExecuteBuildAsync(ctx, host, runner))
-    //        .BindAsync(ctx => CommandLineExecutionService.LocatePackage(ctx, host)
-    //            .BindAsync(pkgPath => CommandLineExecutionService.ExecutePushAsync(pkgPath, ctx.SelectedSource, host, runner)))
-    //        .ConfigureAwait(false);
-
-    //    // Final Output Unwrap
-    //    host.Logger.LogInfo("\n");
-    //    if (result.HasValue)
-    //    {
-    //        host.Logger.LogInfo("**************************************************");
-    //        host.Logger.LogInfo("      YOUR PACKAGE WAS PUSHED SUCCESSFULLY");
-    //        host.Logger.LogInfo("**************************************************");
-    //    }
-
-    //    return result.WithValue(-1);
-    //}
+        // 2. Safe unwrapping using Bind to pass the values into the next step without ever touching .Value
+        return await projRes.BindAsync(projPath =>
+            sourceRes.BindAsync(source =>
+                BuildContextAsync(projPath, source, host)
+            )
+        ).ConfigureAwait(false);
+    }
 
     private static async Task<Maybe<PublishContext>> BuildContextAsync(string projectPath, PublishSource source, IHostServices host)
     {
