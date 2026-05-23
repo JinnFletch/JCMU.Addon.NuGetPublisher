@@ -96,29 +96,6 @@ public static class UserInteractionService
     }
 
     /// <summary>
-    /// Presents the final plan to the user for confirmation before mutating files or pushing.
-    /// </summary>
-    public static async Task<Maybe<PublishContext>> ConfirmPlanAsync(PublishContext ctx, IHostServices host)
-    {
-        host.Logger.LogInfo("\n================== PUBLISH PLAN ==================");
-        host.Logger.LogInfo($"1. Update .csproj version to: {ctx.TargetVersion}");
-        host.Logger.LogInfo($"2. Build & Pack (Release) to: {ctx.OutputDir}");
-        host.Logger.LogInfo($"3. Push to Source:            {ctx.SelectedSource.Name}");
-        host.Logger.LogInfo($"   Target URL:                {ctx.SelectedSource.Url}");
-        host.Logger.LogInfo("==================================================");
-
-        var confirmResult = await host.PromptUserAsync("\nProceed with execution? (y/n):").ConfigureAwait(false);
-
-        return confirmResult.Bind(input =>
-        {
-            if (input.Equals("y", StringComparison.OrdinalIgnoreCase))
-                return Maybe.Some(ctx);
-
-            return Maybe.None<PublishContext>("Operation cancelled by user.");
-        });
-    }
-
-    /// <summary>
     /// Helper to gather the 3 pieces of data needed for a new source.
     /// </summary>
     private static async Task<Maybe<PublishSource>> PromptForNewSourceAsync(IHostServices host, bool isDefault)
@@ -142,5 +119,81 @@ public static class UserInteractionService
                    ApiKey = apiKey,
                    IsDefault = isDefault
                }));
+    }
+
+    /// <summary>
+    /// Analyzes the local vs remote versions and intelligently prompts the user for the target version.
+    /// </summary>
+    public static async Task<Maybe<Version>> PromptForTargetVersionAsync(
+        Version localVersion,
+        Version remoteVersion,
+        IHostServices host)
+    {
+        Version defaultSuggestion;
+
+        host.Logger.LogInfo("\n--- Version Analysis ---");
+        host.Logger.LogInfo($"Local .csproj:  {localVersion}");
+
+        if (remoteVersion.Major == 0 && remoteVersion.Minor == 0)
+        {
+            host.Logger.LogInfo("Remote Server:  [Never Published]");
+            defaultSuggestion = localVersion;
+        }
+        else
+        {
+            host.Logger.LogInfo($"Remote Server:  {remoteVersion}");
+
+            if (localVersion <= remoteVersion)
+            {
+                host.Logger.LogWarning("⚠️ WARNING: Your local .csproj version is equal to or behind the remote server.");
+                defaultSuggestion = new Version(remoteVersion.Major, remoteVersion.Minor, remoteVersion.Build + 1);
+            }
+            else
+            {
+                host.Logger.LogInfo("✓ Local version is ahead of remote. Ready to publish.");
+                defaultSuggestion = localVersion;
+            }
+        }
+
+        var inputResult = await host.PromptUserAsync($"\nTarget Version [{defaultSuggestion}]:").ConfigureAwait(false);
+
+        return inputResult.Match(
+            some: input =>
+            {
+                if (Version.TryParse(input, out var v)) return Maybe.Some(v);
+                return Maybe.None<Version>("Invalid version format.");
+            },
+            none: err => Maybe.Some(defaultSuggestion)
+        );
+    }
+
+    /// <summary>
+    /// Presents the final plan to the user for confirmation before mutating files or pushing.
+    /// </summary>
+    public static async Task<Maybe<PublishContext>> ConfirmPlanAsync(PublishContext ctx, IHostServices host)
+    {
+        host.Logger.LogInfo("\n================== PUBLISH PLAN ==================");
+        host.Logger.LogInfo($"Package:        {ctx.PackageId}");
+        host.Logger.LogInfo($"Destination:    {ctx.SelectedSource.Name}");
+        host.Logger.LogInfo($"                ({ctx.SelectedSource.Url})\n");
+
+        host.Logger.LogInfo($"Remote Latest:  {(ctx.HighestRemoteVersion.Major == 0 ? "None" : ctx.HighestRemoteVersion)}");
+
+        var localWarn = ctx.CurrentLocalVersion <= ctx.HighestRemoteVersion ? " <-- (Out of sync!)" : "";
+        host.Logger.LogInfo($"Local .csproj:  {ctx.CurrentLocalVersion}{localWarn}");
+
+        var mutateWarn = ctx.CurrentLocalVersion != ctx.TargetVersion ? " (Will mutate .csproj)" : "";
+        host.Logger.LogInfo($"Target Version: {ctx.TargetVersion}{mutateWarn}");
+        host.Logger.LogInfo("==================================================");
+
+        var confirmResult = await host.PromptUserAsync("\nProceed with execution? (y/n):").ConfigureAwait(false);
+
+        return confirmResult.Bind(input =>
+        {
+            if (input.Equals("y", StringComparison.OrdinalIgnoreCase))
+                return Maybe.Some(ctx);
+
+            return Maybe.None<PublishContext>("Operation cancelled by user.");
+        });
     }
 }

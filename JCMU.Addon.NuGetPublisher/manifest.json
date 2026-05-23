@@ -1,7 +1,7 @@
 {
   "AddonId": "JCMU.Addon.NuGetPublisher",
   "DisplayName": "NuGet Publish",
-  "Version": "1.2.0",
+  "Version": "1.3.0",
   "Author": "JinnFletch",
   "Menu": {
     "MenuItemName": "Publish",

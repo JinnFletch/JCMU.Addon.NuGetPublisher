@@ -18,7 +18,6 @@ public class PublisherAddon : IJcmuAddon
         host.Logger.LogInfo("    JinnDev Publisher: Dynamic Discovery Mode     ");
         host.Logger.LogInfo("==================================================\n");
 
-
         var result = await host.Settings.GetValueAsync<PublishConfig>("PublishConfig")
             .OrElseAsync(() => UserInteractionService.RunFirstTimeSetupAsync(host))
             .BindAsync(config => PrepareContextAsync(config, context.TargetDirectory, host))
@@ -26,69 +25,73 @@ public class PublisherAddon : IJcmuAddon
             .BindAsync(ctx => ProjectMetadataService.UpdateProjectVersion(ctx.ProjectPath, ctx.TargetVersion).WithValueAsync(ctx))
             .BindAsync(ctx => CommandLineExecutionService.ExecuteBuildAsync(ctx, host, runner))
             .BindAsync(ctx => CommandLineExecutionService.LocatePackage(ctx, host)
-                .BindAsync(pkgPath => CommandLineExecutionService.ExecutePushAsync(pkgPath, ctx.SelectedSource, host, runner)))
+                .BindAsync(pkgPath => CommandLineExecutionService.ExecutePushAsync(pkgPath, ctx.SelectedSource, host, runner)
+                    .WithValueAsync(() => ctx)))
+            .BindAsync(ctx => GitIntegrationService.CommitAndPushVersionBumpAsync(ctx, runner, host))
             .ConfigureAwait(false);
 
-        // Final Output Unwrap
+        // Final Output Formatting
         host.Logger.LogInfo("\n");
-        if (result.HasValue)
-        {
-            host.Logger.LogInfo("**************************************************");
-            host.Logger.LogInfo("      YOUR PACKAGE WAS PUSHED SUCCESSFULLY");
-            host.Logger.LogInfo("**************************************************");
-        }
-
-        return result.WithValue(-1);
+        return result.Match(
+            some: _ =>
+            {
+                host.Logger.LogInfo("**************************************************");
+                host.Logger.LogInfo("      YOUR PACKAGE WAS PUSHED SUCCESSFULLY");
+                host.Logger.LogInfo("**************************************************");
+                return Maybe.Some(-1); // -1 usually signifies waiting for user to close/auto-close
+            },
+            none: err =>
+            {
+                host.Logger.LogError($"Publish Failed: {err.Message}");
+                return Maybe.None<int>(err.Message);
+            });
     }
 
     private static async Task<Maybe<PublishContext>> PrepareContextAsync(PublishConfig config, string targetDirectory, IHostServices host)
     {
-        // 1. Flattened asynchronous execution (no pyramid of doom)
-        var projRes = await ProjectDiscoveryService.DiscoverProjectAsync(targetDirectory, host).ConfigureAwait(false);
-        if (!projRes.HasValue) return Maybe.PropagateFailure<PublishContext, Maybe<string>>(projRes);
-
-        var sourceRes = await UserInteractionService.SelectSourceAsync(config, host).ConfigureAwait(false);
-        if (!sourceRes.HasValue) return Maybe.PropagateFailure<PublishContext, Maybe<PublishSource>>(sourceRes);
-
-        // 2. Safe unwrapping using Bind to pass the values into the next step without ever touching .Value
-        return await projRes.BindAsync(projPath =>
-            sourceRes.BindAsync(source =>
-                BuildContextAsync(projPath, source, host)
-            )
-        ).ConfigureAwait(false);
+        // 1. Find Project -> Select Source -> Build Context (Pure Monadic Chain)
+        return await ProjectDiscoveryService.DiscoverProjectAsync(targetDirectory, host)
+            .BindAsync(projPath => UserInteractionService.SelectSourceAsync(config, host)
+                .BindAsync(source => BuildContextAsync(projPath, source, host)))
+            .ConfigureAwait(false);
     }
 
     private static async Task<Maybe<PublishContext>> BuildContextAsync(string projectPath, PublishSource source, IHostServices host)
     {
-        return await ProjectMetadataService.GetPackageId(projectPath)
-            .BindAsync(packageId => ProjectMetadataService.GetCurrentVersion(projectPath)
-                .BindAsync(async currentVersion =>
-                {
-                    var nextVersion = new Version(currentVersion.Major, currentVersion.Minor, currentVersion.Build + 1);
+        // 1. Gather all required data linearly using Query Syntax
+        var contextDataQuery =
+            from packageId in Task.FromResult(ProjectMetadataService.GetPackageId(projectPath))
+            from currentLocalVersion in Task.FromResult(ProjectMetadataService.GetCurrentVersion(projectPath))
+            from highestRemoteVersion in NuGetFeedService.GetLatestVersionAsync(packageId, source, host)
+            from targetVersion in UserInteractionService.PromptForTargetVersionAsync(currentLocalVersion, highestRemoteVersion, host)
+            select new { packageId, currentLocalVersion, highestRemoteVersion, targetVersion };
 
-                    host.Logger.LogInfo($"\n--- Project Identity ---");
-                    host.Logger.LogInfo($"Target Project: {Path.GetFileNameWithoutExtension(projectPath)}");
-                    host.Logger.LogInfo($"Package ID:     {packageId}");
-                    host.Logger.LogInfo($"Destination:    {source.Name} ({source.Url})");
-                    host.Logger.LogInfo($"Current Version: {currentVersion}");
+        // 2. Await the query and validate the results
+        return await contextDataQuery.BindAsync(data =>
+        {
+            // ==========================================================
+            // VALIDATION GATE
+            // ==========================================================
+            if (data.highestRemoteVersion.Major != 0 && data.targetVersion <= data.highestRemoteVersion)
+            {
+                return Maybe.None<PublishContext>(
+                    $"Validation Failed: Target version ({data.targetVersion}) must be greater than the Remote Latest version ({data.highestRemoteVersion}).");
+            }
 
-                    var inputResult = await host.PromptUserAsync($"Target Version [{nextVersion}]:").ConfigureAwait(false);
+            // 3. Construct and return the final Context
+            var outputDir = Path.Combine(Path.GetDirectoryName(projectPath)!, "bin", "Release");
 
-                    // Match cleanly handles both valid user input and 'None' 
-                    // (which happens if they just press Enter for the default)
-                    return inputResult.Match(
-                        some: input =>
-                        {
-                            if (Version.TryParse(input, out var v)) return Maybe.Some(v);
-                            return Maybe.None<Version>("Invalid version format.");
-                        },
-                        none: err => Maybe.Some(nextVersion)
-                    ).Map(finalVersion =>
-                    {
-                        var outputDir = Path.Combine(Path.GetDirectoryName(projectPath)!, "bin", "Release");
-                        return new PublishContext(projectPath, packageId, outputDir, finalVersion, source);
-                    });
-                })
-            ).ConfigureAwait(false);
+            var ctx = new PublishContext(
+                projectPath,
+                data.packageId,
+                outputDir,
+                data.currentLocalVersion,
+                data.highestRemoteVersion,
+                data.targetVersion,
+                source);
+
+            return Maybe.Some(ctx);
+
+        }).ConfigureAwait(false);
     }
 }
