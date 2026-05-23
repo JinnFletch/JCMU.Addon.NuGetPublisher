@@ -15,7 +15,7 @@ public static class GitIntegrationService
         IStatelessRunner runner,
         IHostServices host)
     {
-        host.Logger.LogInfo("\n--- Step 4: Git Housekeeping ---");
+        host.UI.WriteLine("\n--- Step 4: Git Housekeeping ---", ConsoleColor.Cyan);
 
         var projectDir = Path.GetDirectoryName(ctx.ProjectPath)!;
         var fileName = Path.GetFileName(ctx.ProjectPath);
@@ -30,7 +30,7 @@ public static class GitIntegrationService
             .EnsureSuccessAsync("  -> Not a Git repository. Skipping Git chore.")
             .BindAsync(async isGitRepo =>
             {
-                host.Logger.LogInfo($"  -> Staging and committing version bump for {fileName}...");
+                host.UI.WriteLine($"  -> Staging and committing version bump for {fileName}...");
 
                 var addReq = CommandBuilder.Create("git")
                     .WithArgument("add")
@@ -50,7 +50,7 @@ public static class GitIntegrationService
                     .EnsureSuccessAsync("Failed to commit version bump.")
                     .BindAsync(async _ =>
                     {
-                        host.Logger.LogInfo("  -> Pushing to remote...");
+                        host.UI.WriteLine("  -> Pushing to remote...");
                         var pushReq = CommandBuilder.Create("git")
                             .WithArgument("push")
                             .InDirectory(projectDir)
@@ -58,7 +58,7 @@ public static class GitIntegrationService
 
                         return await runner.RunBufferedAsync(pushReq)
                             .EnsureSuccessAsync("  -> [Warning] Could not push to remote. You may need to push manually.")
-                            .TapAsync(_ => host.Logger.LogInfo("  -> [✓] Git chore pushed successfully."))
+                            .TapAsync(_ => host.UI.WriteLine("  -> [✓] Git chore pushed successfully.", ConsoleColor.Green))
                             .ConfigureAwait(false);
                     }).ConfigureAwait(false);
             })

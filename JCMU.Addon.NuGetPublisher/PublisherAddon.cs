@@ -14,9 +14,9 @@ public class PublisherAddon : IJcmuAddon
         var host = context.HostServices;
         var runner = new StatelessRunner();
 
-        host.Logger.LogInfo("==================================================");
-        host.Logger.LogInfo("    JinnDev Publisher: Dynamic Discovery Mode     ");
-        host.Logger.LogInfo("==================================================\n");
+        host.UI.WriteLine("==================================================", ConsoleColor.Cyan);
+        host.UI.WriteLine("    JinnDev Publisher: Dynamic Discovery Mode     ", ConsoleColor.Cyan);
+        host.UI.WriteLine("==================================================\n", ConsoleColor.Cyan);
 
         var result = await host.Settings.GetValueAsync<PublishConfig>("PublishConfig")
             .OrElseAsync(() => UserInteractionService.RunFirstTimeSetupAsync(host))
@@ -31,18 +31,18 @@ public class PublisherAddon : IJcmuAddon
             .ConfigureAwait(false);
 
         // Final Output Formatting
-        host.Logger.LogInfo("\n");
+        host.UI.WriteLine("\n");
         return result.Match(
             some: _ =>
             {
-                host.Logger.LogInfo("**************************************************");
-                host.Logger.LogInfo("      YOUR PACKAGE WAS PUSHED SUCCESSFULLY");
-                host.Logger.LogInfo("**************************************************");
+                host.UI.WriteLine("**************************************************", ConsoleColor.Green);
+                host.UI.WriteLine("      YOUR PACKAGE WAS PUSHED SUCCESSFULLY", ConsoleColor.Green);
+                host.UI.WriteLine("**************************************************", ConsoleColor.Green);
                 return Maybe.Some(-1); // -1 usually signifies waiting for user to close/auto-close
             },
             none: err =>
             {
-                host.Logger.LogError($"Publish Failed: {err.Message}");
+                host.UI.WriteLine($"Publish Failed: {err.Message}", ConsoleColor.Red);
                 return Maybe.None<int>(err.Message);
             });
     }

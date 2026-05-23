@@ -16,7 +16,7 @@ public static class NuGetFeedService
     /// </summary>
     public static async Task<Maybe<Version>> GetLatestVersionAsync(string packageId, PublishSource source, IHostServices host)
     {
-        host.Logger.LogInfo($"\n[Server Check] Querying {source.Name} for existing versions of '{packageId}'...");
+        host.UI.WriteLine($"\n[Server Check] Querying {source.Name} for existing versions of '{packageId}'...", ConsoleColor.Cyan);
 
         return await Maybe.TryAsync<Version>(async () =>
         {
@@ -33,11 +33,11 @@ public static class NuGetFeedService
 
             if (highestVersion == null)
             {
-                host.Logger.LogInfo("  -> No existing package found. Treating as initial publish.");
+                host.UI.WriteLine($"  -> Highest published version found: {highestVersion}");
                 return new Version(0, 0, 0, 0);
             }
 
-            host.Logger.LogInfo($"  -> Highest published version found: {highestVersion}");
+            host.UI.WriteLine($"  -> Highest published version found: {highestVersion}");
             return highestVersion;
         }).ConfigureAwait(false);
     }
@@ -87,7 +87,7 @@ public static class NuGetFeedService
             var response = await HttpClient.SendAsync(request).ConfigureAwait(false);
             if (!response.IsSuccessStatusCode)
             {
-                host.Logger.LogWarning($"  -> [Warning] Failed to reach remote feed HTTP {response.StatusCode}. Assuming 0.0.0.");
+                host.UI.WriteLine($"  -> [Warning] Failed to reach remote feed HTTP {response.StatusCode}. Assuming 0.0.0.", ConsoleColor.Yellow);
                 return null;
             }
 
@@ -116,7 +116,7 @@ public static class NuGetFeedService
         }
         catch (Exception ex)
         {
-            host.Logger.LogWarning($"  -> [Warning] Could not verify remote version ({ex.Message}).");
+            host.UI.WriteLine($"  -> [Warning] Could not verify remote version ({ex.Message}).", ConsoleColor.Yellow);
             return null;
         }
     }

@@ -8,8 +8,8 @@ public static class UserInteractionService
 {
     public static async Task<Maybe<PublishConfig>> RunFirstTimeSetupAsync(IHostServices host)
     {
-        host.Logger.LogInfo("=== First Time Setup ===");
-        host.Logger.LogInfo("It looks like this is your first time publishing a package with JCMU.");
+        host.UI.WriteLine("=== First Time Setup ===", ConsoleColor.Cyan);
+        host.UI.WriteLine("It looks like this is your first time publishing a package with JCMU.");
 
         return await PromptForNewSourceAsync(host, isDefault: true)
             .BindAsync(newSource =>
@@ -21,7 +21,7 @@ public static class UserInteractionService
                         ? Task.FromResult(Maybe.SUCCESS) // No API Key, just move on
                         : host.Settings.SetSecretAsync($"ApiKey_{newSource.Name}", newSource.ApiKey))
                     .TapAsync(_ => {
-                        host.Logger.LogInfo("Configuration saved successfully!\n");
+                        host.UI.WriteLine("Configuration saved successfully!\n", ConsoleColor.Green);
                         return Task.CompletedTask;
                     })
                     .WithValueAsync(() => config);
@@ -32,16 +32,16 @@ public static class UserInteractionService
     {
         var defaultSource = config.Sources.First(x => x.IsDefault);
 
-        host.Logger.LogInfo("\nAvailable Publish Sources:");
+        host.UI.WriteLine("\nAvailable Publish Sources:", ConsoleColor.Cyan);
         for (int i = 0; i < config.Sources.Count; i++)
         {
             var s = config.Sources[i];
             var suffix = s.IsDefault ? " [DEFAULT]" : "";
-            host.Logger.LogInfo($"{i + 1}. {s.Name} ({s.Url}){suffix}");
+            host.UI.WriteLine($"{i + 1}. {s.Name} ({s.Url}){suffix}");
         }
 
         int addOptionIndex = config.Sources.Count + 1;
-        host.Logger.LogInfo($"{addOptionIndex}. Add a new NuGet package source");
+        host.UI.WriteLine($"{addOptionIndex}. Add a new NuGet package source");
 
         var inputResult = await host.PromptUserAsync($"\nSelect Source (1-{addOptionIndex}) or Enter for Default:").ConfigureAwait(false);
 
@@ -89,7 +89,7 @@ public static class UserInteractionService
                         ? Task.FromResult(Maybe.SUCCESS)
                         : host.Settings.SetSecretAsync($"ApiKey_{newSource.Name}", newSource.ApiKey))
                     .TapAsync(_ => {
-                        host.Logger.LogInfo($"\nSource '{newSource.Name}' saved successfully!");
+                        host.UI.WriteLine($"\nSource '{newSource.Name}' saved successfully!", ConsoleColor.Green);
                         return Task.CompletedTask; })
                     .WithValueAsync(() => newSource);
             }).ConfigureAwait(false);
@@ -131,26 +131,26 @@ public static class UserInteractionService
     {
         Version defaultSuggestion;
 
-        host.Logger.LogInfo("\n--- Version Analysis ---");
-        host.Logger.LogInfo($"Local .csproj:  {localVersion}");
+        host.UI.WriteLine("\n--- Version Analysis ---", ConsoleColor.Cyan);
+        host.UI.WriteLine($"Local .csproj:  {localVersion}");
 
         if (remoteVersion.Major == 0 && remoteVersion.Minor == 0)
         {
-            host.Logger.LogInfo("Remote Server:  [Never Published]");
+            host.UI.WriteLine("Remote Server:  [Never Published]");
             defaultSuggestion = localVersion;
         }
         else
         {
-            host.Logger.LogInfo($"Remote Server:  {remoteVersion}");
+            host.UI.WriteLine($"Remote Server:  {remoteVersion}");
 
             if (localVersion <= remoteVersion)
             {
-                host.Logger.LogWarning("⚠️ WARNING: Your local .csproj version is equal to or behind the remote server.");
+                host.UI.WriteLine("⚠️ WARNING: Your local .csproj version is equal to or behind the remote server.", ConsoleColor.Yellow);
                 defaultSuggestion = new Version(remoteVersion.Major, remoteVersion.Minor, remoteVersion.Build + 1);
             }
             else
             {
-                host.Logger.LogInfo("✓ Local version is ahead of remote. Ready to publish.");
+                host.UI.WriteLine("✓ Local version is ahead of remote. Ready to publish.", ConsoleColor.Green);
                 defaultSuggestion = localVersion;
             }
         }
@@ -172,19 +172,26 @@ public static class UserInteractionService
     /// </summary>
     public static async Task<Maybe<PublishContext>> ConfirmPlanAsync(PublishContext ctx, IHostServices host)
     {
-        host.Logger.LogInfo("\n================== PUBLISH PLAN ==================");
-        host.Logger.LogInfo($"Package:        {ctx.PackageId}");
-        host.Logger.LogInfo($"Destination:    {ctx.SelectedSource.Name}");
-        host.Logger.LogInfo($"                ({ctx.SelectedSource.Url})\n");
+        host.UI.WriteLine("\n================== PUBLISH PLAN ==================", ConsoleColor.Cyan);
 
-        host.Logger.LogInfo($"Remote Latest:  {(ctx.HighestRemoteVersion.Major == 0 ? "None" : ctx.HighestRemoteVersion)}");
+        host.UI.Write("Package:        ");
+        host.UI.WriteLine($"{ctx.PackageId}", ConsoleColor.White);
+
+        host.UI.Write("Destination:    ");
+        host.UI.WriteLine($"{ctx.SelectedSource.Name}", ConsoleColor.White);
+        host.UI.WriteLine($"                ({ctx.SelectedSource.Url})\n", ConsoleColor.DarkGray);
+
+        host.UI.WriteLine($"Remote Latest:  {(ctx.HighestRemoteVersion.Major == 0 ? "None" : ctx.HighestRemoteVersion)}");
 
         var localWarn = ctx.CurrentLocalVersion <= ctx.HighestRemoteVersion ? " <-- (Out of sync!)" : "";
-        host.Logger.LogInfo($"Local .csproj:  {ctx.CurrentLocalVersion}{localWarn}");
+        host.UI.Write("Local .csproj:  ");
+        host.UI.WriteLine($"{ctx.CurrentLocalVersion}{localWarn}", ctx.CurrentLocalVersion <= ctx.HighestRemoteVersion ? ConsoleColor.Yellow : null);
 
         var mutateWarn = ctx.CurrentLocalVersion != ctx.TargetVersion ? " (Will mutate .csproj)" : "";
-        host.Logger.LogInfo($"Target Version: {ctx.TargetVersion}{mutateWarn}");
-        host.Logger.LogInfo("==================================================");
+        host.UI.Write("Target Version: ");
+        host.UI.WriteLine($"{ctx.TargetVersion}{mutateWarn}", ConsoleColor.Magenta);
+
+        host.UI.WriteLine("==================================================", ConsoleColor.Cyan);
 
         var confirmResult = await host.PromptUserAsync("\nProceed with execution? (y/n):").ConfigureAwait(false);
 

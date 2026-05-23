@@ -12,7 +12,7 @@ public static class CommandLineExecutionService
     /// </summary>
     public static async Task<Maybe<PublishContext>> ExecuteBuildAsync(PublishContext ctx, IHostServices host, IStatelessRunner runner)
     {
-        host.Logger.LogInfo("\n--- Step 1: Cleaning & Building (Release) ---");
+        host.UI.WriteLine("\n--- Step 1: Cleaning & Building (Release) ---", ConsoleColor.Cyan);
 
         var request = CommandBuilder.Create("dotnet")
             .WithArgument("build")
@@ -27,7 +27,7 @@ public static class CommandLineExecutionService
             {
                 if (!string.IsNullOrWhiteSpace(line))
                 {
-                    host.Logger.LogInfo($"  [build] {line}");
+                    host.UI.WriteLine($"  [build] {line}", ConsoleColor.DarkGray);
                 }
             }
 
@@ -40,7 +40,7 @@ public static class CommandLineExecutionService
     /// </summary>
     public static Maybe<string> LocatePackage(PublishContext ctx, IHostServices host)
     {
-        host.Logger.LogInfo("\n--- Step 2: Locating Package ---");
+        host.UI.WriteLine("\n--- Step 2: Locating Package ---", ConsoleColor.Cyan);
 
         return Maybe.Try<string>(() =>
         {
@@ -52,7 +52,7 @@ public static class CommandLineExecutionService
 
             if (File.Exists(fullPath))
             {
-                host.Logger.LogInfo($"[✓] Found package: {expectedFileName}");
+                host.UI.WriteLine($"[✓] Found package: {expectedFileName}", ConsoleColor.Green);
                 return fullPath;
             }
 
@@ -66,7 +66,7 @@ public static class CommandLineExecutionService
             if (package == null)
                 throw new Exception($"Could not locate {expectedFileName} or any recent match.");
 
-            host.Logger.LogInfo($"[✓] Found fuzzy match: {package.Name}");
+            host.UI.WriteLine($"[✓] Found fuzzy match: {package.Name}", ConsoleColor.Green);
             return package.FullName;
         });
     }
@@ -76,7 +76,7 @@ public static class CommandLineExecutionService
     /// </summary>
     public static async Task<Maybe> ExecutePushAsync(string packagePath, PublishSource source, IHostServices host, IStatelessRunner runner)
     {
-        host.Logger.LogInfo("\n--- Step 3: Pushing to Destination ---");
+        host.UI.WriteLine("\n--- Step 3: Pushing to Destination ---", ConsoleColor.Cyan);
 
         var requestBuilder = CommandBuilder.Create("dotnet")
             .WithArgument("nuget push")
@@ -92,7 +92,7 @@ public static class CommandLineExecutionService
         var request = requestBuilder.Build();
 
         var safePrintUrl = string.IsNullOrWhiteSpace(source.ApiKey) ? source.Url : $"{source.Url} --api-key ***";
-        host.Logger.LogInfo($"Executing: dotnet nuget push \"{Path.GetFileName(packagePath)}\" --source {safePrintUrl}");
+        host.UI.WriteLine($"Executing: dotnet nuget push \"{Path.GetFileName(packagePath)}\" --source {safePrintUrl}");
 
         return await runner.RunBufferedAsync(request)
             .BindAsync(result =>

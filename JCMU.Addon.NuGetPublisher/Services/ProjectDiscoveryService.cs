@@ -56,10 +56,10 @@ public static class ProjectDiscoveryService
 
     private static async Task<string> PromptForProjectSelectionAsync(List<string> candidates, IHostServices host)
     {
-        host.Logger.LogInfo("\nMultiple package projects detected:");
+        host.UI.WriteLine("\nMultiple package projects detected:", ConsoleColor.Cyan);
         for (int i = 0; i < candidates.Count; i++)
         {
-            host.Logger.LogInfo($"{i + 1}. {Path.GetFileName(candidates[i])}");
+            host.UI.WriteLine($"{i + 1}. {Path.GetFileName(candidates[i])}");
         }
 
         var result = await host.PromptUserAsync($"\nSelect project (1-{candidates.Count}):").ConfigureAwait(false);
